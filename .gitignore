@@ -1,0 +1,10 @@
+__pycache__/
+.vscode/
+.claude/
+.DS_Store
+checkpoints/
+results/
+samples/
+VOC2007/
+VOC2007-test/
+coco/
