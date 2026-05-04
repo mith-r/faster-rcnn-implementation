@@ -171,11 +171,15 @@ class RegionProposalNetwork(nn.Module):
         self.rpn_topk = model_config['rpn_train_topk'] if self.training else model_config['rpn_test_topk']
         self.rpn_prenms_topk = model_config['rpn_train_prenms_topk'] if self.training else model_config['rpn_test_prenms_topk']
         
-        # TODO: Calculate the number of anchors per location based on scales and aspect ratios
-        self.num_anchors = None  # You need to compute this
+        # Calculate the number of anchors per location based on scales and aspect ratios
+        scales_size = len(self.scales)
+        aspect_ratios_size = len(self.aspect_ratios)
+        self.num_anchors = scales_size * aspect_ratios_size # You need to compute this
         
         # TODO: Implement the network layers
         # 1. A 3x3 convolutional layer with in_channels input channels and in_channels output channels
+
+        
         # 2. Two 1x1 convolutional layers for classification and regression
         #    - Classification layer should output num_anchors channels (one for each anchor)
         #    - Regression layer should output num_anchors * 4 channels (four coordinates for each anchor)
