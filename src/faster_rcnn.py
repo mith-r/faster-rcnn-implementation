@@ -226,8 +226,10 @@ class RegionProposalNetwork(nn.Module):
         shifts = torch.stack([shifts_x, shifts_y, shifts_x, shifts_y], dim=1)
 
         # 4. Combine base anchors with shifts to generate anchors for all positions
+        anchors = (shifts[:, None, :] + base_anchors[None, :, :]).reshape(-1, 4)
+        
         # Return anchors with shape [num_locations*num_anchors, 4]
-        return None  # Replace with your implementation
+        return anchors  # Replace with your implementation
     
     def assign_targets_to_anchors(self, anchors, gt_boxes):
         """Assign ground truth boxes and labels to anchors based on IoU"""
