@@ -191,7 +191,7 @@ class RegionProposalNetwork(nn.Module):
         for layer in [self.rpn_conv, self.cls_layer, self.reg]:
             nn.init.normal_(layer.weight, mean = 0.0, std = 0.01)
         # - Constant 0 for biases
-            layer.bias = 0
+            nn.init.constant(layer.bias, 0)
     
     def generate_anchors(self, image, feat):
         """Generate anchors for all feature map locations with all scales and aspect ratios"""
