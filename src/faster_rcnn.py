@@ -215,12 +215,16 @@ class RegionProposalNetwork(nn.Module):
 
         base_anchors = torch.stack([-widths/2, -heights/2, widths/2, heights/2], dim = 1)
 
-
-
-
-
-
         # 3. Create shift values for all grid positions in the feature map
+        shifts_x = torch.arange(feat_width, dtype=torch.float32, device = feat.device) * stride_width
+        shifts_y = torch.arange(feat_height, dtype=torch.float32, device = feat.device) * stride_height
+
+        shifts_y, shifts_x = torch.meshgrid(shifts_y, shifts_x, indexing = "ij")
+        shifts_x = shifts_x.reshape(-1)
+        shifts_y = shifts_y.reshape(-1)
+
+        shifts = torch.stack([shifts_x, shifts_y, shifts_x, shifts_y], dim=1)
+
         # 4. Combine base anchors with shifts to generate anchors for all positions
         # Return anchors with shape [num_locations*num_anchors, 4]
         return None  # Replace with your implementation
