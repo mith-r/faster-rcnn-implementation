@@ -197,6 +197,11 @@ class RegionProposalNetwork(nn.Module):
         """Generate anchors for all feature map locations with all scales and aspect ratios"""
         # TODO: Implement anchor generation
         # 1. Get feature map dimensions and calculate stride relative to input image
+        img_height, img_width = image.shape[-2:0]
+        feat_height, feat_width = feat.shape[-2:0]
+
+        stride_height = img_height/feat_height
+        stride_width = img_width/feat_width
 
 
         # 2. Create base anchors at (0,0) for all combinations of scales and aspect ratios
