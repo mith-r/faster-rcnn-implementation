@@ -233,46 +233,157 @@ class RegionProposalNetwork(nn.Module):
     
     def assign_targets_to_anchors(self, anchors, gt_boxes):
         """Assign ground truth boxes and labels to anchors based on IoU"""
-        # TODO: Implement anchor-GT box matching
+        # Implement anchor-GT box matching
         # 1. Calculate IoU between all anchors and ground truth boxes
+        iou_matrix = get_iou(gt_boxes, anchors)
+
         # 2. For each anchor, find the GT box with maximum IoU
+        best_iou_per_anchor, best_gt_idx_per_anchor = iou_matrix.max(dim=0)
+
         # 3. Label anchors based on IoU thresholds:
         #    - Positive (1): IoU > high_threshold
         #    - Negative (0): IoU < low_threshold
         #    - Ignore (-1): IoU between thresholds
+        labels = torch.full(
+            best_iou_per_anchor.shape,
+            -1.0,
+            dtype = torch.float32,
+            device = anchors.device
+        )
+        labels[best_iou_per_anchor < self.low_iou_threshold] = 0
+        labels[best_iou_per_anchor >= self.high_iou_threshold] = 1
+
         # 4. For each GT box, find the anchor with highest IoU and label it positive
+        best_anchor_iou_per_gt, _ = iou_matrix.max(dim=1)
+        gt_pairs_with_highest_iou = torch.where(
+            iou_matrix == best_anchor_iou_per_gt[:, None]
+        )
+        pred_inds_to_update = gt_pairs_with_highest_iou[1]
+
+        best_gt_idx_per_anchor[pred_inds_to_update] = gt_pairs_with_highest_iou[0]
+        labels[pred_inds_to_update] = 1
+
         # 5. Return labels and matched GT boxes for all anchors
-        return None, None  # Replace with your implementation
+        matched_gt_boxes = gt_boxes[best_gt_idx_per_anchor]
+        return labels, matched_gt_boxes  # Replace with your implementation
 
     def filter_proposals(self, proposals, cls_scores, image_shape):
         """Filter proposals using NMS and score thresholds"""
         # TODO: Implement proposal filtering
         # 1. Convert classification scores to probabilities
+        cls_scores = cls_scores.reshape(-1)
+        cls_scores = torch.sigmoid(cls_scores)
+        proposals = proposals.reshape(-1, 4)
+
         # 2. Select top-k proposals before NMS
+        _, top_n_idx = cls_scores.topk(min(self.rpn_prenms_topk, len(cls_scores)))
+        cls_scores = cls_scores[top_n_idx]
+        proposals = proposals[top_n_idx]
+
         # 3. Clamp boxes to image boundary
+        proposals = clamp_boxes_to_image_boundary(proposals, image_shape)
+
         # 4. Remove small boxes
+        min_size = 16
+        ws = proposals[:, 2] - proposals[:, 0]
+        hs = proposals[:, 3] - proposals[:, 1]
+        keep = (ws >= min_size) & (hs >= min_size)
+        proposals = proposals[keep]
+        cls_scores = cls_scores[keep]
+
         # 5. Apply NMS
+        keep_idx = torchvision.ops.nms(proposals, cls_scores, self.rpn_nms_threshold)
+
         # 6. Take top-k after NMS
+        keep_idx = keep_idx[:self.rpn_topk]
+        proposals = proposals[keep_idx]
+        cls_scores = cls_scores[keep_idx]
+
         # Return filtered proposals and their scores
-        return None, None  # Replace with your implementation
+        return proposals, cls_scores  # Replace with your implementation
     
     def forward(self, image, feat, target=None):
         """Forward pass for RPN"""
         # TODO: Implement RPN forward pass
         # 1. Apply convolutional layer
+        rpn_feat = nn.ReLU()(self.rpn_conv(feat))
+
         # 2. Generate classification and regression predictions
+        cls_scores = self.cls_layer(rpn_feat)
+        box_transform_pred = self.reg(rpn_feat)
+
         # 3. Generate anchors
+        anchors = self.generate_anchors(image, feat)
+
         # 4. Reshape predictions to match anchor format
+        number_of_anchors_per_location = cls_scores.size(1)
+        cls_scores = cls_scores.permute(0,2,3,1).reshape(-1)
+
+        box_transform_pred = box_transform_pred.view(
+            box_transform_pred.size(0),
+            number_of_anchors_per_location,
+            4,
+            rpn_feat.shape[-2],
+            rpn_feat.shape[-1],
+        )
+
+        box_transform_pred = box_transform_pred.permute(0,3,4,1,2)
+        box_transform_pred = box_transform_pred.reshape(-1,4)
+
         # 5. Apply bounding box regression to anchors to get proposals
+        proposals = apply_regression_pred_to_anchors_or_proposals(
+            box_transform_pred.detach().reshape(-1,1,4),
+            anchors,
+        )
+        proposals = proposals.reshape(proposals.size(0), 4)
+
         # 6. Filter proposals
-        
+        proposals, scores = self.filter_proposals(proposals, cls_scores.detach(), image.shape)
+
+        rpn_output = {
+            'proposals': proposals,
+            'scores': scores,
+        }
+
         # During training (if target is provided):
-        # 7. Assign targets to anchors
-        # 8. Sample positive and negative anchors
-        # 9. Calculate classification and regression losses
-        
-        # Return a dictionary with proposals, scores, and (during training) losses
-        return {}  # Replace with your implementation
+        if self.training and target is not None:
+            # 7. Assign targets to anchors
+            labels_for_anchors, matched_gt_boxes_for_anchors = self.assign_targets_to_anchors(
+                anchors, target['bboxes'][0]
+            )
+
+            regression_targets = boxes_to_transformation_targets(
+                matched_gt_boxes_for_anchors, anchors
+            )
+
+            # 8. Sample positive and negative anchors
+            sampled_neg_idx_mask, sampled_pos_idx_mask = sample_positive_negative(
+                labels_for_anchors,
+                positive_count=self.rpn_pos_count,
+                total_count=self.rpn_batch_size,
+            )
+            sampled_idxs = torch.where(sampled_pos_idx_mask | sampled_neg_idx_mask)[0]
+
+            # 9. Calculate classification and regression losses
+            localization_loss = (
+                torch.nn.functional.smooth_l1_loss(
+                    box_transform_pred[sampled_pos_idx_mask],
+                    regression_targets[sampled_pos_idx_mask],
+                    beta=1 / 9,
+                    reduction='sum',
+                )
+                / (sampled_idxs.numel())
+            )
+
+            cls_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                cls_scores[sampled_idxs].flatten(),
+                labels_for_anchors[sampled_idxs].flatten(),
+            )
+
+            rpn_output['rpn_classification_loss'] = cls_loss
+            rpn_output['rpn_localization_loss'] = localization_loss
+
+        return rpn_output
 
 
 # ======================================================================
