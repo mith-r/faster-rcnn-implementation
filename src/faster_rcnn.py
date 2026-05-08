@@ -176,22 +176,29 @@ class RegionProposalNetwork(nn.Module):
         aspect_ratios_size = len(self.aspect_ratios)
         self.num_anchors = scales_size * aspect_ratios_size # You need to compute this
         
-        # TODO: Implement the network layers
+        # Implement the network layers
         # 1. A 3x3 convolutional layer with in_channels input channels and in_channels output channels
+        self.rpn_conv = nn.Conv2d(in_channels, in_channels, kernel_size = 3, padding = 1)
 
-        
         # 2. Two 1x1 convolutional layers for classification and regression
         #    - Classification layer should output num_anchors channels (one for each anchor)
+        self.cls_layer = nn.Conv2d(in_channels, self.num_anchors, kernel_size = 1)
         #    - Regression layer should output num_anchors * 4 channels (four coordinates for each anchor)
+        self.reg = nn.Conv2d(in_channels, self.num_anchors * 4, kernel_size = 1)
         
-        # TODO: Initialize the weights of the layers
+        #  Initialize the weights of the layers
         # - Normal distribution with std=0.01 for weights
+        for layer in [self.rpn_conv, self.cls_layer, self.reg]:
+            nn.init.normal_(layer.weight, mean = 0.0, std = 0.01)
         # - Constant 0 for biases
+            layer.bias = 0
     
     def generate_anchors(self, image, feat):
         """Generate anchors for all feature map locations with all scales and aspect ratios"""
         # TODO: Implement anchor generation
         # 1. Get feature map dimensions and calculate stride relative to input image
+
+
         # 2. Create base anchors at (0,0) for all combinations of scales and aspect ratios
         # 3. Create shift values for all grid positions in the feature map
         # 4. Combine base anchors with shifts to generate anchors for all positions
