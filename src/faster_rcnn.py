@@ -204,6 +204,20 @@ class RegionProposalNetwork(nn.Module):
         stride_width = img_width//feat_width
 
         # 2. Create base anchors at (0,0) for all combinations of scales and aspect ratios
+        scales = torch.as_tensor(self.scales, dtype = torch.float32, device=feat.device)
+        aspect_ratios = torch.as_tensor(self.aspect_ratios, dtype = torch.float32, device = feat.device)
+
+        h_ratio = torch.sqrt(aspect_ratios)
+        w_ratio = 1 / h_ratio
+
+        widths = (scales[:, None] * w_ratio[None, :]).view(-1)
+        heights = (scales[:, None] * h_ratio[None, :]).view(-1)
+
+        base_anchors = torch.stack([-widths/2, -heights/2, widths/2, heights/2], dim = 1)
+
+
+
+
 
 
         # 3. Create shift values for all grid positions in the feature map
