@@ -566,13 +566,45 @@ class ROIHead(nn.Module):
     
     def filter_predictions(self, pred_boxes, pred_labels, pred_scores):
         """Filter predictions by score, size, and NMS"""
-        # TODO: Implement prediction filtering
         # 1. Remove low scoring boxes
+        keep = torch.where(pred_scores > self.low_score_threshold)[0]
+        pred_boxes = pred_boxes[keep]
+        pred_scores = pred_scores[keep]
+        pred_labels = pred_labels[keep]
+
         # 2. Remove small boxes
+        min_size = 16
+        ws = pred_boxes[:, 2] - pred_boxes[:, 0]
+        hs = pred_boxes[:, 3] - pred_boxes[:, 1]
+        keep = (ws >= min_size) & (hs >= min_size)
+        pred_boxes = pred_boxes[keep]
+        pred_scores = pred_scores[keep]
+        pred_labels = pred_labels[keep]
+
         # 3. Apply per-class NMS
+        keep_mask = torch.zeros_like(pred_scores, dtype=torch.bool)
+        for class_id in torch.unique(pred_labels):
+            curr_indices = torch.where(pred_labels == class_id)[0]
+            curr_keep_indices = torchvision.ops.nms(
+                pred_boxes[curr_indices],
+                pred_scores[curr_indices],
+                self.nms_threshold,
+            )
+            keep_mask[curr_indices[curr_keep_indices]] = True
+        keep_indices = torch.where(keep_mask)[0]
+
         # 4. Sort by score and take top-k
+        post_nms_keep_indices = keep_indices[
+            pred_scores[keep_indices].sort(descending=True)[1]
+        ]
+        keep = post_nms_keep_indices[:self.topK_detections]
+
+        pred_boxes = pred_boxes[keep]
+        pred_scores = pred_scores[keep]
+        pred_labels = pred_labels[keep]
+
         # Return filtered boxes, labels, and scores
-        return None, None, None  # Replace with your implementation
+        return pred_boxes, pred_labels, pred_scores
 
 
 # ======================================================================
@@ -590,9 +622,20 @@ class FasterRCNN(nn.Module):
         vgg16 = torchvision.models.vgg16(weights="DEFAULT")
         self.backbone = vgg16.features[:-1]
         
-        # TODO: Initialize the RPN and ROI head
         # 1. Create the RPN using model_config parameters
+        self.rpn = RegionProposalNetwork(
+            in_channels=model_config['backbone_out_channels'],
+            scales=model_config['scales'],
+            aspect_ratios=model_config['aspect_ratios'],
+            model_config=model_config,
+        )
+
         # 2. Create the ROI head using model_config parameters
+        self.roi_head = ROIHead(
+            model_config=model_config,
+            num_classes=num_classes,
+            in_channels=model_config['backbone_out_channels'],
+        )
         
         # Freeze early backbone layers (already implemented)
         for layer in self.backbone[:10]:
@@ -680,13 +723,33 @@ class FasterRCNN(nn.Module):
     
     def forward(self, image, target=None):
         """Forward pass for Faster R-CNN"""
-        # TODO: Implement the full Faster R-CNN forward pass
         # 1. Save original image shape
+        old_shape = image.shape[-2:]
+
         # 2. Normalize and resize image (and boxes during training)
+        if self.training:
+            image, bboxes = self.normalize_resize_image_and_boxes(image, target['bboxes'])
+            target['bboxes'] = bboxes
+        else:
+            image, _ = self.normalize_resize_image_and_boxes(image, None)
+
         # 3. Extract features with backbone
+        feat = self.backbone(image)
+
         # 4. Get region proposals from RPN
+        rpn_output = self.rpn(image, feat, target)
+        proposals = rpn_output['proposals']
+
         # 5. Process proposals with ROI head
+        frcnn_output = self.roi_head(feat, proposals, image.shape[-2:], target)
+
         # 6. During inference, transform boxes back to original image size
+        if not self.training:
+            frcnn_output['boxes'] = transform_boxes_to_original_size(
+                frcnn_output['boxes'],
+                image.shape[-2:],
+                old_shape,
+            )
+
         # 7. Return RPN and FRCNN outputs
-        
-        return None, None  # Replace with your implementation
+        return rpn_output, frcnn_output
