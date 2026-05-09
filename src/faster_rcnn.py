@@ -458,28 +458,111 @@ class ROIHead(nn.Module):
     
     def forward(self, feat, proposals, image_shape, target):
         """Forward pass for ROI head"""
-        # TODO: Implement ROI head forward pass
-        
         # During training (if target is provided):
-        # 1. Add ground truth boxes to proposals
-        # 2. Assign targets to proposals
-        # 3. Sample positive and negative proposals
-        
+        if self.training and target is not None:
+            # 1. Add ground truth boxes to proposals
+            gt_boxes = target['bboxes'][0]
+            gt_labels = target['labels'][0]
+            proposals = torch.cat([proposals, gt_boxes], dim=0)
+
+            # 2. Assign targets to proposals
+            labels, matched_gt_boxes = self.assign_target_to_proposals(
+                proposals, gt_boxes, gt_labels
+            )
+
+            # 3. Sample positive and negative proposals
+            sampled_neg_idx_mask, sampled_pos_idx_mask = sample_positive_negative(
+                labels,
+                positive_count=self.roi_pos_count,
+                total_count=self.roi_batch_size,
+            )
+            sampled_idxs = torch.where(sampled_pos_idx_mask | sampled_neg_idx_mask)[0]
+
+            proposals = proposals[sampled_idxs]
+            labels = labels[sampled_idxs]
+            matched_gt_boxes = matched_gt_boxes[sampled_idxs]
+            regression_targets = boxes_to_transformation_targets(matched_gt_boxes, proposals)
+
         # For both training and inference:
         # 4. Calculate scale for RoI pooling
+        size = feat.shape[-2:]
+        possible_scales = []
+        for s1, s2 in zip(size, image_shape[-2:]):
+            approx_scale = float(s1) / float(s2)
+            scale = 2 ** float(torch.tensor(approx_scale).log2().round())
+            possible_scales.append(scale)
+        assert possible_scales[0] == possible_scales[1]
+        spatial_scale = possible_scales[0]
+
         # 5. Apply RoI pooling to extract features from proposals
+        proposal_roi_pool_feats = torchvision.ops.roi_pool(
+            feat,
+            [proposals],
+            output_size=self.pool_size,
+            spatial_scale=spatial_scale,
+        )
+
         # 6. Apply fully connected layers
+        proposal_roi_pool_feats = proposal_roi_pool_feats.flatten(start_dim=1)
+        box_fc_6 = torch.nn.functional.relu(self.fc1(proposal_roi_pool_feats))
+        box_fc_7 = torch.nn.functional.relu(self.fc2(box_fc_6))
+
         # 7. Generate classification and box regression predictions
-        
+        cls_scores = self.cls_layer(box_fc_7)
+        box_transform_pred = self.bbox_reg_layer(box_fc_7)
+
+        num_boxes, num_classes = cls_scores.shape
+        box_transform_pred = box_transform_pred.reshape(num_boxes, num_classes, 4)
+
+        frcnn_output = {}
+
         # During training:
-        # 8. Calculate classification and regression losses
-        
+        if self.training and target is not None:
+            # 8. Calculate classification and regression losses
+            classification_loss = torch.nn.functional.cross_entropy(cls_scores, labels)
+
+            fg_proposals_idxs = torch.where(labels > 0)[0]
+            fg_cls_labels = labels[fg_proposals_idxs]
+
+            localization_loss = torch.nn.functional.smooth_l1_loss(
+                box_transform_pred[fg_proposals_idxs, fg_cls_labels],
+                regression_targets[fg_proposals_idxs],
+                beta=1 / 9,
+                reduction='sum',
+            )
+            localization_loss = localization_loss / labels.numel()
+
+            frcnn_output['frcnn_classification_loss'] = classification_loss
+            frcnn_output['frcnn_localization_loss'] = localization_loss
+            return frcnn_output
+
         # During inference:
         # 9. Apply regression to proposals
+        pred_boxes = apply_regression_pred_to_anchors_or_proposals(box_transform_pred, proposals)
+        pred_scores = torch.nn.functional.softmax(cls_scores, dim=-1)
+
+        pred_boxes = clamp_boxes_to_image_boundary(pred_boxes, image_shape)
+
+        pred_labels = torch.arange(num_classes, device=cls_scores.device)
+        pred_labels = pred_labels.view(1, -1).expand_as(pred_scores)
+
+        pred_boxes = pred_boxes[:, 1:]
+        pred_scores = pred_scores[:, 1:]
+        pred_labels = pred_labels[:, 1:]
+
+        pred_boxes = pred_boxes.reshape(-1, 4)
+        pred_scores = pred_scores.reshape(-1)
+        pred_labels = pred_labels.reshape(-1)
+
         # 10. Filter and refine final predictions
-        
-        # Return a dictionary with boxes, scores, labels, and (during training) losses
-        return {}  # Replace with your implementation
+        pred_boxes, pred_labels, pred_scores = self.filter_predictions(
+            pred_boxes, pred_labels, pred_scores
+        )
+
+        frcnn_output['boxes'] = pred_boxes
+        frcnn_output['scores'] = pred_scores
+        frcnn_output['labels'] = pred_labels
+        return frcnn_output
     
     def filter_predictions(self, pred_boxes, pred_labels, pred_scores):
         """Filter predictions by score, size, and NMS"""
