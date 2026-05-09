@@ -409,13 +409,26 @@ class ROIHead(nn.Module):
         
         # TODO: Implement the network layers
         # 1. Two fully connected layers for feature transformation
+        self.fc1 = nn.Linear(in_channels * self.pool_size * self.pool_size, self.fc_inner_dim)
+        self.fc2 = nn.Linear(self.fc_inner_dim, self.fc_inner_dim)
+
         # 2. Classification layer for predicting class scores
+        self.cls_layer = nn.Linear(self.fc_inner_dim, self.num_classes)
+
         # 3. Bounding box regression layer for refining boxes
+        self.reg_layer = nn.Linear(self.fc_inner_dim, self.num_classes * 4)
         
-        # TODO: Initialize the weights
+
+        # Initialize the weights
         # - Normal distribution with std=0.01 for classification layer
+        nn.init.normal_(self.cls_layer.weight, mean = 0.0, std = 0.01)
+
         # - Normal distribution with std=0.001 for box regression layer
+        nn.init.normal_(self.reg_layer.weight, mean=0.0, std = 0.001)
+    
         # - Constant 0 for biases
+        nn.init.constant_(self.cls_layer.bias, 0)
+        nn.init.constant_(self.bbox_reg_layer.bias, 0)
     
     def assign_target_to_proposals(self, proposals, gt_boxes, gt_labels):
         """Assign ground truth boxes and labels to proposals based on IoU"""
