@@ -191,7 +191,7 @@ class RegionProposalNetwork(nn.Module):
         for layer in [self.rpn_conv, self.cls_layer, self.reg]:
             nn.init.normal_(layer.weight, mean = 0.0, std = 0.01)
         # - Constant 0 for biases
-            nn.init.constant(layer.bias, 0)
+            nn.init.constant_(layer.bias, 0)
     
     def generate_anchors(self, image, feat):
         """Generate anchors for all feature map locations with all scales and aspect ratios"""
@@ -416,7 +416,7 @@ class ROIHead(nn.Module):
         self.cls_layer = nn.Linear(self.fc_inner_dim, self.num_classes)
 
         # 3. Bounding box regression layer for refining boxes
-        self.reg_layer = nn.Linear(self.fc_inner_dim, self.num_classes * 4)
+        self.bbox_reg_layer = nn.Linear(self.fc_inner_dim, self.num_classes * 4)
         
 
         # Initialize the weights
@@ -424,7 +424,7 @@ class ROIHead(nn.Module):
         nn.init.normal_(self.cls_layer.weight, mean = 0.0, std = 0.01)
 
         # - Normal distribution with std=0.001 for box regression layer
-        nn.init.normal_(self.reg_layer.weight, mean=0.0, std = 0.001)
+        nn.init.normal_(self.bbox_reg_layer.weight, mean=0.0, std = 0.001)
     
         # - Constant 0 for biases
         nn.init.constant_(self.cls_layer.bias, 0)
