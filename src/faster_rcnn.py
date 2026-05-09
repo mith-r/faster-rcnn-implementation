@@ -432,15 +432,29 @@ class ROIHead(nn.Module):
     
     def assign_target_to_proposals(self, proposals, gt_boxes, gt_labels):
         """Assign ground truth boxes and labels to proposals based on IoU"""
-        # TODO: Implement proposal-GT box matching
         # 1. Calculate IoU between proposals and ground truth boxes
+        iou_matrix = get_iou(gt_boxes, proposals)
+
         # 2. For each proposal, find the GT box with maximum IoU
+        best_iou_per_proposal, best_gt_idx_per_proposal = iou_matrix.max(dim=0)
+
         # 3. Label proposals based on IoU thresholds:
         #    - Background (0): IoU < iou_threshold
         #    - Ignore (-1): IoU < low_bg_iou
         #    - Class specific (1+): IoU >= iou_threshold
+        labels = gt_labels[best_gt_idx_per_proposal]
+        labels = labels.to(dtype=torch.int64)
+
+        background_proposals = (best_iou_per_proposal >= self.low_bg_iou) & \
+                               (best_iou_per_proposal < self.iou_threshold)
+        ignored_proposals = best_iou_per_proposal < self.low_bg_iou
+
+        labels[background_proposals] = 0
+        labels[ignored_proposals] = -1
+
         # 4. Return labels and matched GT boxes for all proposals
-        return None, None  # Replace with your implementation
+        matched_gt_boxes = gt_boxes[best_gt_idx_per_proposal]
+        return labels, matched_gt_boxes
     
     def forward(self, feat, proposals, image_shape, target):
         """Forward pass for ROI head"""
